@@ -535,6 +535,40 @@ function setupBot(config, users, sessions) {
     ctx.reply('⏹ Слежка выключена');
   });
 
+  // ---------- диагностика ----------
+
+  bot.command('debug', async (ctx) => {
+    try {
+      const u = U(ctx);
+      const s = S(ctx);
+      const storage = require('./storage');
+      let connected = false;
+      let authorized = false;
+      try { connected = !!(s.userbot.client && s.userbot.client.connected); } catch {}
+      try { authorized = await s.userbot.isAuthorized(); } catch {}
+      const w = u.watch;
+      const lines = [
+        `Хранилище: ${storage.mode}`,
+        `Сессия в данных: ${u.session ? 'есть' : 'НЕТ'}`,
+        `Слушатель запущен: ${s.running ? 'да' : 'НЕТ'}`,
+        `Клиент подключён: ${connected ? 'да' : 'нет'}, авторизован: ${authorized ? 'да' : 'нет'}`,
+        `Слежка: ${w.enabled ? 'включена' : 'ВЫКЛЮЧЕНА'}, слова: ${w.keywords.length ? w.keywords.join(', ') : '—'}`,
+        `Каналов для тапа: ${u.channels.length}, ждущих заказов: ${s.watcher.pending.length}`,
+        '',
+        'Темы (чат → id, которые бот ждёт):'
+      ];
+      if (!w.targets.length) lines.push('  нет');
+      w.targets.forEach((t) => lines.push(`  ${t.chat} → [${(t.chatIds || []).join(', ')}], тема ${t.topicId == null ? 'любая' : t.topicId}`));
+      lines.push('', 'Последние входящие сообщения аккаунта:');
+      if (!s.seen.length) lines.push('  ничего не приходило — аккаунт не получает обновления');
+      s.seen.forEach((m) => lines.push(
+        `  ${fmtMinutes((Date.now() - m.at) / 60000)} назад: чат ${m.chatId}, тема ${m.topic}, ${m.out ? 'ИСХОДЯЩЕЕ' : 'входящее'}${m.poll ? ', опрос' : ''}`));
+      await replyLong(ctx, lines.join('\n'));
+    } catch (e) {
+      ctx.reply(`❌ ${e.message}`);
+    }
+  });
+
   // ---------- статус ----------
 
   bot.command('status', async (ctx) => {

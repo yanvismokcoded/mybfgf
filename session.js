@@ -22,6 +22,7 @@ class UserSession {
     this.dialogsPrimedAt = 0;
     this.titles = new Map();
     this.watcher = new TopicWatcher(this);
+    this.seen = []; // последние входящие сообщения (для /debug)
   }
 
   get client() {
@@ -135,7 +136,20 @@ class UserSession {
 
   async onMessage(event) {
     const msg = event.message;
-    if (!msg || !this.running) return;
+    if (!msg) return;
+    // запоминаем всё, что приходит, — /debug покажет, доходят ли сообщения вообще
+    try {
+      const rt = msg.replyTo;
+      this.seen.push({
+        at: Date.now(),
+        chatId: String(msg.chatId),
+        out: !!msg.out,
+        topic: rt && rt.forumTopic ? (rt.replyToTopId || rt.replyToMsgId || null) : null,
+        poll: !!(msg.media && msg.media.className === 'MessageMediaPoll')
+      });
+      if (this.seen.length > 8) this.seen.shift();
+    } catch {}
+    if (!this.running) return;
     // свои исходящие сообщения игнорируем; для теста с того же аккаунта: WATCH_OWN=1
     if (msg.out && !process.env.WATCH_OWN) {
       if (process.env.DEBUG_WATCH) console.log(`[watch] пропуск: сообщение отправлено с самого аккаунта бота (чат ${msg.chatId})`);
