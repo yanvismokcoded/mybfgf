@@ -559,10 +559,13 @@ function setupBot(config, users, sessions) {
       ];
       if (!w.targets.length) lines.push('  нет');
       w.targets.forEach((t) => lines.push(`  ${t.chat} → [${(t.chatIds || []).join(', ')}], тема ${t.topicId == null ? 'любая' : t.topicId}`));
-      lines.push('', 'Последние входящие сообщения аккаунта:');
-      if (!s.seen.length) lines.push('  ничего не приходило — аккаунт не получает обновления');
+      lines.push('', `Сообщения из отслеживаемых чатов (всего из прочих чатов получено: ${s.otherCount || 0}):`);
+      if (!s.seen.length) lines.push('  ничего не приходило из нужной группы');
       s.seen.forEach((m) => lines.push(
         `  ${fmtMinutes((Date.now() - m.at) / 60000)} назад: чат ${m.chatId}, тема ${m.topic}, ${m.out ? 'ИСХОДЯЩЕЕ' : 'входящее'}${m.poll ? ', опрос' : ''}`));
+      lines.push('', 'Журнал слежки:');
+      if (!s.watcher.log.length) lines.push('  пусто');
+      s.watcher.log.forEach((l) => lines.push(`  ${fmtMinutes((Date.now() - l.at) / 60000)} назад: ${l.text}`));
       await replyLong(ctx, lines.join('\n'));
     } catch (e) {
       ctx.reply(`❌ ${e.message}`);

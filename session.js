@@ -137,17 +137,24 @@ class UserSession {
   async onMessage(event) {
     const msg = event.message;
     if (!msg) return;
-    // запоминаем всё, что приходит, — /debug покажет, доходят ли сообщения вообще
+    // запоминаем сообщения из отслеживаемых чатов (для /debug), остальные только считаем
     try {
-      const rt = msg.replyTo;
-      this.seen.push({
-        at: Date.now(),
-        chatId: String(msg.chatId),
-        out: !!msg.out,
-        topic: rt && rt.forumTopic ? (rt.replyToTopId || rt.replyToMsgId || null) : null,
-        poll: !!(msg.media && msg.media.className === 'MessageMediaPoll')
-      });
-      if (this.seen.length > 8) this.seen.shift();
+      const cid = String(msg.chatId);
+      const watched = ((this.user.watch && this.user.watch.targets) || [])
+        .some((t) => Array.isArray(t.chatIds) && t.chatIds.includes(cid));
+      if (watched) {
+        const rt = msg.replyTo;
+        this.seen.push({
+          at: Date.now(),
+          chatId: cid,
+          out: !!msg.out,
+          topic: rt && rt.forumTopic ? (rt.replyToTopId || rt.replyToMsgId || null) : null,
+          poll: !!(msg.media && msg.media.className === 'MessageMediaPoll')
+        });
+        if (this.seen.length > 8) this.seen.shift();
+      } else {
+        this.otherCount = (this.otherCount || 0) + 1;
+      }
     } catch {}
     if (!this.running) return;
     // свои исходящие сообщения игнорируем; для теста с того же аккаунта: WATCH_OWN=1

@@ -22,6 +22,13 @@ class TopicWatcher {
     this.s = session;
     this.pending = []; // [{ link, username, msgId, chatId, topicId, chatTitle, at }]
     this.queue = Promise.resolve(); // тапы идут по одному, чтобы не мешать друг другу
+    this.log = []; // последние события слежки (показывает /debug)
+  }
+
+  note(text) {
+    this.log.push({ at: Date.now(), text });
+    if (this.log.length > 12) this.log.shift();
+    if (process.env.DEBUG_WATCH) console.log(`[watch ${this.s.user.id}] ${text}`);
   }
 
   get cfg() {
@@ -59,12 +66,14 @@ class TopicWatcher {
 
   // Возвращает true, если сообщение относится к слежке и обработано
   async handle(msg, chatId) {
-    const dbg = (m) => { if (process.env.DEBUG_WATCH) console.log(`[watch ${this.s.user.id}] ${m}`); };
+    const dbg = (m) => this.note(m);
     if (!this.matches(msg, chatId)) {
-      if (process.env.DEBUG_WATCH) {
-        const cfg = this.cfg;
-        const hit = (cfg.targets || []).some((t) => Array.isArray(t.chatIds) && t.chatIds.includes(String(chatId)));
-        if (hit) dbg(`чат ${chatId} совпал, но слежка ${cfg.enabled ? 'включена' : 'ВЫКЛЮЧЕНА (/watch_on)'}, тема сообщения=${this.getTopicId(msg)}, нужна=${JSON.stringify((cfg.targets || []).map((t) => t.topicId))}`);
+      const cfg = this.cfg;
+      const hit = (cfg.targets || []).some((t) => Array.isArray(t.chatIds) && t.chatIds.includes(String(chatId)));
+      if (hit) {
+        dbg(cfg.enabled
+          ? `сообщение из нужного чата, но тема ${this.getTopicId(msg)} не подходит (ждём ${JSON.stringify((cfg.targets || []).map((t) => t.topicId))})`
+          : 'сообщение из нужного чата, но слежка выключена (/watch_on)');
       }
       return false;
     }
@@ -118,13 +127,14 @@ class TopicWatcher {
   async onPoll(msg, chatId) {
     this.pruneStale();
     const topic = this.getTopicId(msg);
+    this.note(`получен опрос (тема ${topic}), ждущих заказов: ${this.pending.length}`);
     let idx = -1;
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const p = this.pending[i];
       if (p.chatId === String(chatId) && p.topicId === topic) { idx = i; break; }
     }
     if (idx === -1) { // опрос без заказа перед ним — не трогаем
-      if (process.env.DEBUG_WATCH) console.log(`[watch] опрос без подходящего заказа (тема ${topic}, ждущих заказов: ${this.pending.length})`);
+      this.note('опрос пропущен: перед ним не было принятого заказа в этой теме');
       return false;
     }
     const item = this.pending.splice(idx, 1)[0];
@@ -137,6 +147,17 @@ class TopicWatcher {
   }
 
   async processPoll(msg, chatId, item) {
+    this.note(`начинаю тап: ${item.link} @${item.username}`);
+    try {
+      await this._processPoll(msg, chatId, item);
+      this.note('тап и ответ в опросе завершены');
+    } catch (e) {
+      this.note(`ОШИБКА обработки опроса: ${e.errorMessage || e.message}`);
+      await this.s.notify(`❌ Ошибка при обработке заказа: ${e.errorMessage || e.message}\n🔗 ${item.link}`);
+    }
+  }
+
+  async _processPoll(msg, chatId, item) {
     const poll = msg.media && msg.media.poll;
     if (!poll || !poll.answers) return;
 
