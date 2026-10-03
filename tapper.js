@@ -1,4 +1,4 @@
-const { Api, utils } = require('telegram');
+const { Api, utils } = require('teleproto');
 const bigInt = require('big-integer');
 
 function randomId() {

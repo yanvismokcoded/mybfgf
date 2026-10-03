@@ -1,7 +1,7 @@
 const { TopicWatcher } = require('./watcher');
 const bigInt = require('big-integer');
-const { NewMessage } = require('telegram/events');
-const { utils } = require('telegram');
+const { NewMessage } = require('teleproto/events');
+const { utils } = require('teleproto');
 
 const Userbot = require('./userbot');
 const Tapper = require('./tapper');

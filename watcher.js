@@ -1,4 +1,4 @@
-const { Api } = require('telegram');
+const { Api } = require('teleproto');
 const parser = require('./parser');
 
 // сколько ждём опрос после сообщения-заказа, прежде чем считать его протухшим
@@ -97,7 +97,8 @@ class TopicWatcher {
     const text = parser.messageToText(msg);
     if (!/(?:t\.me|telegram\.me)\//i.test(text)) {
       const media = msg.media ? msg.media.className : 'нет';
-      dbg(`не заказ: нет t.me-ссылки (медиа: ${media}, текст: «${text.slice(0, 40).replace(/\s+/g, ' ')}»)`);
+      dbg(`не заказ: нет t.me-ссылки (медиа: ${media}, текст: «${text.slice(0, 40).replace(/\s+/g, ' ')}»)` +
+        (media === 'MessageMediaUnsupported' ? ' — вероятно, опрос, который библиотека не понимает (нужен более новый слой Telegram API)' : ''));
       return false;
     }
     if (!this.hasKeyword(text)) { dbg('нет ключевого слова'); return false; }

@@ -1,5 +1,5 @@
-const { TelegramClient, Api } = require('telegram');
-const { StringSession } = require('telegram/sessions');
+const { TelegramClient, Api } = require('teleproto');
+const { StringSession } = require('teleproto/sessions');
 
 // Личный аккаунт одного пользователя: подключение, вход по коду и 2FA.
 // Строка сессии хранится в user.session (users.json).

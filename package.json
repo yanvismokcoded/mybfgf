@@ -12,6 +12,6 @@
   "dependencies": {
     "big-integer": "^1.6.52",
     "telegraf": "^4.16.3",
-    "telegram": "^2.26.22"
+    "teleproto": "^1.229.0"
   }
 }

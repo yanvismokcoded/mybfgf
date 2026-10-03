@@ -1,5 +1,5 @@
 const { Telegraf } = require('telegraf');
-const { Api, utils } = require('telegram');
+const { Api, utils } = require('teleproto');
 const crypto = require('crypto');
 
 // Одноразовый ключ вида "A1B2-C3D4"
