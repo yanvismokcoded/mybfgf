@@ -135,7 +135,12 @@ class UserSession {
 
   async onMessage(event) {
     const msg = event.message;
-    if (!msg || msg.out || !this.running) return;
+    if (!msg || !this.running) return;
+    // свои исходящие сообщения игнорируем; для теста с того же аккаунта: WATCH_OWN=1
+    if (msg.out && !process.env.WATCH_OWN) {
+      if (process.env.DEBUG_WATCH) console.log(`[watch] пропуск: сообщение отправлено с самого аккаунта бота (чат ${msg.chatId})`);
+      return;
+    }
 
     // Служебные сообщения Telegram (777000): коды входа и оповещения —
     // пересылаем владельцу в личку.

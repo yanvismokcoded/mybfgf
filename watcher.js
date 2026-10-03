@@ -59,22 +59,31 @@ class TopicWatcher {
 
   // Возвращает true, если сообщение относится к слежке и обработано
   async handle(msg, chatId) {
-    if (!this.matches(msg, chatId)) return false;
+    const dbg = (m) => { if (process.env.DEBUG_WATCH) console.log(`[watch ${this.s.user.id}] ${m}`); };
+    if (!this.matches(msg, chatId)) {
+      if (process.env.DEBUG_WATCH) {
+        const cfg = this.cfg;
+        const hit = (cfg.targets || []).some((t) => Array.isArray(t.chatIds) && t.chatIds.includes(String(chatId)));
+        if (hit) dbg(`чат ${chatId} совпал, но слежка ${cfg.enabled ? 'включена' : 'ВЫКЛЮЧЕНА (/watch_on)'}, тема сообщения=${this.getTopicId(msg)}, нужна=${JSON.stringify((cfg.targets || []).map((t) => t.topicId))}`);
+      }
+      return false;
+    }
 
     if (msg.media && msg.media.className === 'MessageMediaPoll') {
       return this.onPoll(msg, chatId);
     }
 
     const text = parser.messageToText(msg);
-    if (!/(?:t\.me|telegram\.me)\//i.test(text)) return false;
-    if (!this.hasKeyword(text)) return false;
+    if (!/(?:t\.me|telegram\.me)\//i.test(text)) { dbg('нет t.me-ссылки в тексте'); return false; }
+    if (!this.hasKeyword(text)) { dbg('нет ключевого слова'); return false; }
 
     const parsed = parser.parseVzMessage(text, true) ||
       (() => {
         const link = parser.findAnyPostLink(text);
         return link ? { link, username: null } : null;
       })();
-    if (!parsed) return false;
+    if (!parsed) { dbg('не нашёл ссылку на пост'); return false; }
+    dbg(`заказ принят: ${parsed.link} @${parsed.username}`);
 
     await this.onOrderMessage(msg, chatId, parsed);
     return true;
@@ -114,7 +123,10 @@ class TopicWatcher {
       const p = this.pending[i];
       if (p.chatId === String(chatId) && p.topicId === topic) { idx = i; break; }
     }
-    if (idx === -1) return false; // опрос без заказа перед ним — не трогаем
+    if (idx === -1) { // опрос без заказа перед ним — не трогаем
+      if (process.env.DEBUG_WATCH) console.log(`[watch] опрос без подходящего заказа (тема ${topic}, ждущих заказов: ${this.pending.length})`);
+      return false;
+    }
     const item = this.pending.splice(idx, 1)[0];
 
     this.queue = this.queue
