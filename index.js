@@ -1,14 +1,24 @@
-// Точка входа: собирает config, users, sessions и запускает бота.
-const config = require('./config');
-const users = require('./users');
-const { SessionManager } = require('./session');
-const setupBot = require('./bot');
+// Точка входа: загружает сохранённое состояние, затем собирает config, users, sessions и запускает бота.
+const storage = require('./storage');
 
-const sessions = new SessionManager(config, users);
-const bot = setupBot(config, users, sessions);
+let bot = null;
 
-// Поднимаем сессии пользователей, которые уже авторизованы
-sessions.startAll().catch((e) => console.error('startAll error:', e.message));
+async function main() {
+  // Сначала подтягиваем данные из хранилища (Upstash Redis), и только потом читаем config/users.
+  // Если Redis недоступен — init бросит ошибку, и бот не стартует с пустым состоянием.
+  await storage.init();
+
+  const config = require('./config');
+  const users = require('./users');
+  const { SessionManager } = require('./session');
+  const setupBot = require('./bot');
+
+  const sessions = new SessionManager(config, users);
+  bot = setupBot(config, users, sessions);
+
+  // Поднимаем сессии пользователей, которые уже авторизованы
+  sessions.startAll().catch((e) => console.error('startAll error:', e.message));
+}
 
 // Render (Web Service) требует открытый порт — отдаём простой ответ "ok".
 // Этот же адрес можно пинговать (например, UptimeRobot), чтобы сервис не засыпал.
@@ -22,9 +32,15 @@ http.createServer((req, res) => {
 process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e));
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e));
 
-function shutdown(signal) {
-  try { bot.stop(signal); } catch {}
+async function shutdown(signal) {
+  try { if (bot) bot.stop(signal); } catch {}
+  try { await storage.flush(); } catch {}
   process.exit(0);
 }
 process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));
+
+main().catch((e) => {
+  console.error('Старт не удался:', e.message);
+  process.exit(1);
+});

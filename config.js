@@ -1,14 +1,9 @@
 // Общие настройки бота. Секреты берутся из переменных окружения (Render → Environment).
 // Изменяемые данные (ownerId, ключи доступа) хранятся в config.json в VOLUME_DIR.
-const fs = require('fs');
-const path = require('path');
+// (чтение/запись идёт через storage.js — Upstash Redis или файл)
+const storage = require('./storage');
 
-const VOLUME_DIR = process.env.VOLUME_DIR || path.join(__dirname, 'data');
-try { fs.mkdirSync(VOLUME_DIR, { recursive: true }); } catch (e) {
-  console.error('Не смог создать VOLUME_DIR:', e.message);
-}
-
-const file = path.join(VOLUME_DIR, 'config.json');
+const VOLUME_DIR = storage.VOLUME_DIR;
 
 const data = {
   botToken: process.env.BOT_TOKEN || '',
@@ -23,14 +18,8 @@ const data = {
 };
 
 // Подмешиваем сохранённое состояние; секреты из окружения всегда приоритетнее
-try {
-  if (fs.existsSync(file)) {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (saved && typeof saved === 'object') Object.assign(data, saved);
-  }
-} catch (e) {
-  console.error('config.json битый, использую значения по умолчанию:', e.message);
-}
+const saved = storage.read('config');
+if (saved && typeof saved === 'object') Object.assign(data, saved);
 if (process.env.BOT_TOKEN) data.botToken = process.env.BOT_TOKEN;
 if (process.env.API_ID) data.apiId = Number(process.env.API_ID);
 if (process.env.API_HASH) data.apiHash = process.env.API_HASH;
@@ -38,11 +27,9 @@ if (process.env.OWNER_ID) data.ownerId = Number(process.env.OWNER_ID);
 if (!data.pendingKeys || typeof data.pendingKeys !== 'object') data.pendingKeys = {};
 
 function save() {
-  try {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error('config save error:', e.message);
-  }
+  // секреты из окружения в хранилище не кладём
+  const { botToken, apiHash, ...rest } = data;
+  storage.write('config', rest);
 }
 
 if (!data.botToken) console.error('⚠️ BOT_TOKEN не задан — бот не сможет запуститься');

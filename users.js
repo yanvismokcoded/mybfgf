@@ -1,30 +1,16 @@
-const fs = require('fs');
-const path = require('path');
+const storage = require('./storage');
 const config = require('./config');
 
-// Личные данные КАЖДОГО пользователя бота (ключ — telegram id).
-const file = path.join(config.VOLUME_DIR, 'users.json');
-
+// Личные данные КАЖДОГО пользователя бота (ключ — telegram id), включая строки сессий.
 let data = { users: {} };
 
-try {
-  if (fs.existsSync(file)) {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (parsed && typeof parsed === 'object') data = parsed;
-  }
-} catch (e) {
-  console.error('users.json битый, начинаю с пустого:', e.message);
-  data = { users: {} };
-}
+const saved = storage.read('users');
+if (saved && typeof saved === 'object') data = saved;
 
 if (!data.users || typeof data.users !== 'object') data.users = {};
 
 function save() {
-  try {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error('users save error:', e.message);
-  }
+  storage.write('users', data);
 }
 
 const DEFAULT_KEYWORDS = ['заказ', 'новый заказ'];
@@ -111,4 +97,4 @@ function all() {
   return Object.values(data.users).map(normalize);
 }
 
-module.exports = { data, save, has, get, create, ensure, remove, all, file };
+module.exports = { data, save, has, get, create, ensure, remove, all };
