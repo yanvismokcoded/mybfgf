@@ -589,7 +589,21 @@ function setupBot(config, users, sessions) {
     try { ctx.reply(`Ошибка: ${err.message}`); } catch {}
   });
 
-  bot.launch();
+  // На старте Render иногда не может достучаться до api.telegram.org (ETIMEDOUT).
+  // Простой bot.launch() в этом случае падает и больше не пытается — бот молчит до рестарта.
+  // Поэтому повторяем запуск, пока не получится.
+  (async () => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await bot.launch({}, () => console.log('Telegram-бот запущен'));
+        return; // launch завершился штатно (бот остановлен)
+      } catch (e) {
+        const wait = Math.min(30, attempt * 5);
+        console.error(`Запуск бота не удался (попытка ${attempt}): ${e.message || e.code}. Повтор через ${wait} с`);
+        await new Promise((r) => setTimeout(r, wait * 1000));
+      }
+    }
+  })();
   return bot;
 }
 

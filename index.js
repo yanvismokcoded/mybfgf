@@ -1,4 +1,7 @@
 // Точка входа: загружает сохранённое состояние, затем собирает config, users, sessions и запускает бота.
+// Предпочитаем IPv4: на Render запросы к api.telegram.org по IPv6 иногда зависают
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch {}
+
 const storage = require('./storage');
 
 let bot = null;
