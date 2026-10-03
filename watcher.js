@@ -117,17 +117,19 @@ class TopicWatcher {
 
   async onOrderMessage(msg, chatId, parsed) {
     this.pruneStale();
-    let chatTitle = String(chatId);
-    try { chatTitle = await this.s.chatTitle(chatId); } catch {}
-    this.pending.push({
+    // Заказ кладём в очередь СРАЗУ, до любых await: опрос приходит почти одновременно
+    // с заказом и иначе успевает проверить очередь раньше, чем заказ в неё попадёт.
+    const item = {
       link: parsed.link,
       username: parsed.username || null,
       msgId: msg.id,
       chatId: String(chatId),
       topicId: this.getTopicId(msg),
-      chatTitle,
+      chatTitle: String(chatId),
       at: Date.now()
-    });
+    };
+    this.pending.push(item);
+    try { item.chatTitle = await this.s.chatTitle(chatId); } catch {}
   }
 
   // t.me-ссылка на конкретное сообщение в чате (для отчёта владельцу)
