@@ -149,7 +149,7 @@ class UserSession {
           chatId: cid,
           out: !!msg.out,
           topic: rt && rt.forumTopic ? (rt.replyToTopId || rt.replyToMsgId || null) : null,
-          poll: !!(msg.media && msg.media.className === 'MessageMediaPoll')
+          media: msg.media ? msg.media.className : null
         });
         if (this.seen.length > 8) this.seen.shift();
       } else {

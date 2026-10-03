@@ -562,7 +562,7 @@ function setupBot(config, users, sessions) {
       lines.push('', `Сообщения из отслеживаемых чатов (всего из прочих чатов получено: ${s.otherCount || 0}):`);
       if (!s.seen.length) lines.push('  ничего не приходило из нужной группы');
       s.seen.forEach((m) => lines.push(
-        `  ${fmtMinutes((Date.now() - m.at) / 60000)} назад: чат ${m.chatId}, тема ${m.topic}, ${m.out ? 'ИСХОДЯЩЕЕ' : 'входящее'}${m.poll ? ', опрос' : ''}`));
+        `  ${fmtMinutes((Date.now() - m.at) / 60000)} назад: чат ${m.chatId}, тема ${m.topic}, ${m.out ? 'ИСХОДЯЩЕЕ' : 'входящее'}, медиа: ${m.media || 'нет'}`));
       lines.push('', 'Журнал слежки:');
       if (!s.watcher.log.length) lines.push('  пусто');
       s.watcher.log.forEach((l) => lines.push(`  ${fmtMinutes((Date.now() - l.at) / 60000)} назад: ${l.text}`));

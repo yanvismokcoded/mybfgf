@@ -14,6 +14,18 @@ function answerText(a) {
   return typeof t === 'string' ? t : (t.text || '');
 }
 
+// Достаёт опрос из сообщения (разные версии gramjs кладут его в разные поля)
+function getPoll(msg) {
+  try {
+    const m = msg && msg.media;
+    if (m && m.poll && Array.isArray(m.poll.answers)) return m.poll;
+    const p = msg && msg.poll;
+    if (p && Array.isArray(p.answers)) return p;
+    if (p && p.poll && Array.isArray(p.poll.answers)) return p.poll;
+  } catch {}
+  return null;
+}
+
 // Слежка за темами: в теме кидают заказ (ссылка на голосование + @юз + ключевое слово),
 // следом — опрос "сколько тапнул". Бот тапает, отмечается в опросе и пишет отчёт
 // владельцу В ЛИЧКУ. В сам чат с заказами бот ничего не пишет — только голосует в опросе.
@@ -78,12 +90,16 @@ class TopicWatcher {
       return false;
     }
 
-    if (msg.media && msg.media.className === 'MessageMediaPoll') {
+    if ((msg.media && msg.media.className === 'MessageMediaPoll') || getPoll(msg)) {
       return this.onPoll(msg, chatId);
     }
 
     const text = parser.messageToText(msg);
-    if (!/(?:t\.me|telegram\.me)\//i.test(text)) { dbg('нет t.me-ссылки в тексте'); return false; }
+    if (!/(?:t\.me|telegram\.me)\//i.test(text)) {
+      const media = msg.media ? msg.media.className : 'нет';
+      dbg(`не заказ: нет t.me-ссылки (медиа: ${media}, текст: «${text.slice(0, 40).replace(/\s+/g, ' ')}»)`);
+      return false;
+    }
     if (!this.hasKeyword(text)) { dbg('нет ключевого слова'); return false; }
 
     const parsed = parser.parseVzMessage(text, true) ||
@@ -157,9 +173,34 @@ class TopicWatcher {
     }
   }
 
+  // вариант опроса под число n: точное → ближайшее не больше → наименьшее
+  pickNumeric(poll, n) {
+    const numeric = poll.answers
+      .map((a) => ({ a, n: parseInt(answerText(a).replace(/\D/g, ''), 10) }))
+      .filter((x) => !Number.isNaN(x.n));
+    const exact = numeric.find((x) => x.n === n);
+    const notOver = numeric.filter((x) => x.n <= n).sort((x, y) => y.n - x.n)[0];
+    const smallest = [...numeric].sort((x, y) => x.n - y.n)[0];
+    const pick = exact || notOver || smallest || null;
+    return pick ? pick.a : null;
+  }
+
+  // option = null — снять голос
+  async vote(msg, chatId, option) {
+    await this.s.client.invoke(new Api.messages.SendVote({
+      peer: await this.s.client.getInputEntity(chatId),
+      msgId: msg.id,
+      options: option ? [option] : []
+    }));
+  }
+
+  // Порядок: 1) отмечаемся в опросе, 2) тапаем, 3) если тапнулось иначе, чем планировали — правим голос.
   async _processPoll(msg, chatId, item) {
-    const poll = msg.media && msg.media.poll;
-    if (!poll || !poll.answers) return;
+    const poll = getPoll(msg);
+    if (!poll || !poll.answers) {
+      this.note('в сообщении не нашёл вариантов опроса');
+      return;
+    }
 
     if (!item.username) {
       await this.s.notify(
@@ -171,10 +212,33 @@ class TopicWatcher {
     }
 
     const want = this.cfg.tapCount;
+    const planned = Math.min(want, (this.s.user.channels || []).length);
 
     let already = false;
     try { already = await this.s.tapper.alreadyTapped(item.link); } catch {}
 
+    // --- 1. сначала голосуем
+    let chosen = null;
+    let voteError = null;
+    if (already) {
+      chosen = poll.answers.find((x) => ALREADY_RE.test(answerText(x))) || null;
+    } else if (planned > 0) {
+      chosen = this.pickNumeric(poll, planned);
+    }
+    if (chosen) {
+      try {
+        await this.vote(msg, chatId, chosen.option);
+        this.note(`отметился в опросе: «${answerText(chosen)}»`);
+      } catch (e) {
+        voteError = e.errorMessage || e.message;
+        this.note(`не смог проголосовать: ${voteError}`);
+        chosen = null;
+      }
+    } else {
+      this.note('подходящий вариант в опросе не найден');
+    }
+
+    // --- 2. потом тапаем
     let total = 0;
     let tapError = null;
     let failed = [];
@@ -188,33 +252,26 @@ class TopicWatcher {
       }
     }
 
-    // выбираем вариант ответа в опросе
-    let chosen = null;
-    if (already) {
-      chosen = poll.answers.find((a) => ALREADY_RE.test(answerText(a))) || null;
-    } else if (total > 0) {
-      const numeric = poll.answers
-        .map((a) => ({ a, n: parseInt(answerText(a).replace(/\D/g, ''), 10) }))
-        .filter((x) => !Number.isNaN(x.n));
-      const exact = numeric.find((x) => x.n === total);
-      const notOver = numeric.filter((x) => x.n <= total).sort((x, y) => y.n - x.n)[0];
-      const smallest = [...numeric].sort((x, y) => x.n - y.n)[0];
-      const pick = exact || notOver || smallest || null;
-      chosen = pick ? pick.a : null;
-    }
-
-    if (chosen) {
+    // --- 3. если вышло не то число — правим голос
+    let correction = null;
+    if (!already && chosen) {
       try {
-        await this.s.client.invoke(new Api.messages.SendVote({
-          peer: await this.s.client.getInputEntity(chatId),
-          msgId: msg.id,
-          options: [chosen.option]
-        }));
+        if (total === 0) {
+          await this.vote(msg, chatId, null);
+          correction = 'голос снят, потому что тап не удался';
+          chosen = null;
+        } else {
+          const better = this.pickNumeric(poll, total);
+          if (better && !Buffer.from(better.option).equals(Buffer.from(chosen.option))) {
+            await this.vote(msg, chatId, better.option);
+            correction = `голос исправлен: «${answerText(chosen)}» → «${answerText(better)}»`;
+            chosen = better;
+          }
+        }
       } catch (e) {
-        console.log('vote error', e.errorMessage || e.message);
-        chosen = null;
-        item.voteError = e.errorMessage || e.message;
+        correction = `не смог исправить голос: ${e.errorMessage || e.message}`;
       }
+      if (correction) this.note(correction);
     }
 
     const cfg = this.cfg;
@@ -237,8 +294,9 @@ class TopicWatcher {
     }
     if (tapError) lines.push(`⚠️ ${tapError}`);
     if (chosen) lines.push(`🗳 Отмечено в опросе: ${answerText(chosen)}`);
-    else if (item.voteError) lines.push(`⚠️ Не смог проголосовать в опросе: ${item.voteError}`);
-    else lines.push('⚠️ Подходящий вариант в опросе не найден — голос не отдан');
+    else if (voteError) lines.push(`⚠️ Не смог проголосовать в опросе: ${voteError}`);
+    else lines.push('⚠️ Голос в опросе не отдан');
+    if (correction) lines.push(`ℹ️ ${correction}`);
 
     await this.s.notify(lines.join('\n'));
   }
