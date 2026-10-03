@@ -1,4 +1,3 @@
-const { Proposer } = require('./offers');
 const { TopicWatcher } = require('./watcher');
 const bigInt = require('big-integer');
 const { NewMessage } = require('telegram/events');
@@ -55,7 +54,6 @@ class UserSession {
     this.watchedSig = null;
     this.watchedAt = 0;
     this.refreshing = null;
-    this.proposer = new Proposer(this);
     this.watcher = new TopicWatcher(this);
   }
 
@@ -354,11 +352,9 @@ class UserSession {
       await this.client.sendMessage(chatId, { message: replyText, replyTo: replyToMsgId });
       await this.log(`✅ Тап выполнен: @${ctx.username} | ${ctx.link} | каналов: ${result.total} | чат: ${chatId}`);
       await this.postDeal(ctx, 'done', `🎯 Тапнуто каналов: ${result.total}`);
-      await this.proposer.onDone(ctx, result);
     } catch (e) {
       await this.log(`❌ Ошибка тапа: ${e.message}`);
       await this.postDeal(ctx, 'failed', `⚠️ ${e.message}`);
-      await this.proposer.onFailed(ctx, e);
     }
   }
 
@@ -405,8 +401,6 @@ class UserSession {
     const chatId = msg.chatId;
     if (!this.watched.has(String(chatId))) return;
 
-    await this.proposer.observe(msg, String(chatId));          // копит кандидатов для предложений
-    if (await this.proposer.handleReply(msg, chatId)) return;  // ответ на наше предложение
 
     const text = parser.messageToText(msg);
     const replyToId = this.getReplyToId(msg);
@@ -501,8 +495,6 @@ class UserSession {
         agreedAt: Date.now(),
         dealMsgId: null
       };
-
-      this.proposer.onAgreed(ctx, msg);
 
       // карточка договора сразу, потом она же отредактируется при выполнении
       ctx.dealMsgId = await this.postDeal(ctx, 'agreed', '⏳ Ждём подтверждения партнёра');
@@ -631,7 +623,6 @@ class SessionManager {
   tickAll() {
     for (const s of this.map.values()) {
       s.autopostTick().catch((e) => console.log('autopost tick error', e.message));
-      s.proposer.tick().catch((e) => console.log('offers tick error', e.message));
     }
   }
 }

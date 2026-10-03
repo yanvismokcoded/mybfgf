@@ -61,25 +61,6 @@ function blank(id) {
 
     autopost: { enabled: false, text: '', entities: [], intervalMin: null, lastAt: null, nextAt: null, lastResult: null },
 
-    // проактивные предложения ВЗ (см. offers.js)
-    offers: {
-      enabled: false,
-      link: '',
-      username: '',
-      count: null,
-      text: '',
-      intervalMin: 60,
-      perCycle: 5,
-      notify: true,
-      nextAt: null,
-      lastAt: null,
-      lastResult: null,
-      syncedAt: null,
-      stats: { offered: 0, agreed: 0, done: 0 }
-    },
-    partners: { ids: {}, names: {} }, // кто уже вз-ился (по id / по юзернейму)
-    offered: {}, // authorId -> { n, at, username, chatKey, key } — кому и когда уже предлагали
-    offerMsgs: {}, // "chatId_msgId" нашего предложения -> { authorId, at, handled, ask }
     ownPosts: {}, // "chatId_msgId" сообщений, которые отправил ВЗ-модуль бота (автопост, предложения, наше "вз") -> timestamp
 
     // какие каналы уже тапали какой пост (чтобы не дублировать)
@@ -109,13 +90,6 @@ function normalize(u) {
   if (!u.autopost || typeof u.autopost !== 'object') u.autopost = def.autopost;
   if (!u.tapped || typeof u.tapped !== 'object') u.tapped = {};
 
-  if (!u.offers || typeof u.offers !== 'object') u.offers = def.offers;
-  if (!u.offers.stats || typeof u.offers.stats !== 'object') u.offers.stats = def.offers.stats;
-  if (!u.partners || typeof u.partners !== 'object') u.partners = def.partners;
-  if (!u.partners.ids || typeof u.partners.ids !== 'object') u.partners.ids = {};
-  if (!u.partners.names || typeof u.partners.names !== 'object') u.partners.names = {};
-  if (!u.offered || typeof u.offered !== 'object') u.offered = {};
-  if (!u.offerMsgs || typeof u.offerMsgs !== 'object') u.offerMsgs = {};
   if (!u.ownPosts || typeof u.ownPosts !== 'object' || Array.isArray(u.ownPosts)) u.ownPosts = {};
 
   if (!u.watch || typeof u.watch !== 'object') u.watch = def.watch;

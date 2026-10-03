@@ -1,4 +1,3 @@
-const { registerOfferCommands } = require('./offers');
 const { Telegraf } = require('telegraf');
 const { Api, utils } = require('telegram');
 const { CustomFile } = require('telegram/client/uploads');
@@ -1206,10 +1205,9 @@ function setupBot(config, users, sessions) {
 
   // Ответ владельца текстом на пересланное обращение в поддержку —
   // сюда попадают только сообщения, не подошедшие ни под одну команду выше
-  // ⚠️ Этот обработчик стоит до registerOfferCommands (/offer регистрируется
-  // ниже), поэтому обязательно вызывает next() во всех веток, где сообщение
-  // не относится к пересылке ответа поддержки — иначе более поздние команды
-  // (в частности /offer) вообще перестают доходить до своих хендлеров.
+  // ⚠️ Обработчик обязательно вызывает next() во всех ветках, где сообщение
+  // не относится к пересылке ответа поддержки — иначе более поздние
+  // обработчики перестанут получать свои сообщения.
   bot.on('text', async (ctx, next) => {
     if (!isOwner(ctx)) return next();
     const replied = ctx.message.reply_to_message;
@@ -1229,8 +1227,6 @@ function setupBot(config, users, sessions) {
     console.error('bot error:', err);
     try { ctx.reply(`Ошибка: ${err.message}`); } catch {}
   });
-
-  registerOfferCommands(bot, users, sessions);
 
   bot.launch();
   return bot;
