@@ -6,6 +6,8 @@ const { utils } = require('teleproto');
 const Userbot = require('./userbot');
 const Tapper = require('./tapper');
 
+const POLL_EVERY_MS = 6000;
+
 // Всё, что происходит от имени одного пользователя: его клиент, его каналы,
 // его слежка за темами.
 class UserSession {
@@ -23,6 +25,12 @@ class UserSession {
     this.titles = new Map();
     this.watcher = new TopicWatcher(this);
     this.seen = []; // последние входящие сообщения (для /debug)
+    this.otherChats = new Map(); // id чата → сколько сообщений пришло (для /debug)
+    this.processed = new Set(); // "чат:сообщение" — чтобы не обработать одно сообщение дважды
+    this.pollTimer = null;
+    this.polling = false;
+    this.pollState = new Map(); // ключ темы → { chatId, lastId }
+    this.pollInfo = { runs: 0, fetched: 0, fed: 0, lastAt: 0, errors: [] };
   }
 
   get client() {
@@ -51,10 +59,15 @@ class UserSession {
     this.running = true;
 
     await this.primeDialogs();
+    // Страховка: если Telegram не присылает апдейты из группы, сами забираем новые сообщения
+    this.pollTimer = setInterval(() => {
+      this.pollTargets().catch((e) => console.log('poll error', e.message));
+    }, POLL_EVERY_MS);
     console.log(`[user ${this.user.id}] сессия запущена, тем под слежкой: ${this.user.watch.targets.length}`);
   }
 
   async stop() {
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     if (this.handler && this.client) {
       try { this.client.removeEventHandler(this.handler, new NewMessage({})); } catch {}
     }
@@ -132,6 +145,67 @@ class UserSession {
     }
   }
 
+  // ---------- ручной опрос тем (запасной путь) ----------
+
+  async fetchRecent(chatId, topicId) {
+    const opts = { limit: 15 };
+    if (topicId != null) opts.replyTo = topicId;
+    try {
+      return await this.client.getMessages(chatId, opts);
+    } catch (e) {
+      await this.primeDialogs(true); // сущность могла не быть в кэше
+      return await this.client.getMessages(chatId, opts);
+    }
+  }
+
+  async pollTargets() {
+    const cfg = this.user.watch;
+    if (this.polling || !this.running || !this.client || !cfg || !cfg.enabled) return;
+    this.polling = true;
+    try {
+      for (const t of cfg.targets || []) {
+        const key = `${t.chat}|${t.topicId}`;
+        const st = this.pollState.get(key) || { chatId: null, lastId: null };
+        const candidates = st.chatId ? [st.chatId] : (t.chatIds || []);
+        let msgs = null;
+        let lastErr = null;
+        for (const cid of candidates) {
+          try {
+            msgs = await this.fetchRecent(cid, t.topicId);
+            st.chatId = cid;
+            break;
+          } catch (e) { lastErr = e; }
+        }
+        this.pollInfo.runs++;
+        this.pollInfo.lastAt = Date.now();
+        if (!msgs) {
+          const text = `${t.chat}: ${(lastErr && (lastErr.errorMessage || lastErr.message)) || 'нет доступа'}`;
+          const errs = this.pollInfo.errors;
+          if (!errs.length || errs[errs.length - 1].text !== text) errs.push({ at: Date.now(), text });
+          if (errs.length > 5) errs.shift();
+          continue;
+        }
+        const list = [...msgs].filter((m) => m && m.id).sort((a, b) => a.id - b.id);
+        if (st.lastId == null) { // первый проход — запоминаем, что уже было, историю не трогаем
+          st.lastId = list.length ? list[list.length - 1].id : 0;
+          this.pollState.set(key, st);
+          continue;
+        }
+        this.pollState.set(key, st);
+        for (const m of list) {
+          if (m.id <= st.lastId) continue;
+          st.lastId = m.id;
+          this.pollInfo.fetched++;
+          const before = this.processed.size;
+          await this.dispatch(m);
+          if (this.processed.size !== before) this.pollInfo.fed++; // это сообщение апдейтами не приходило
+        }
+      }
+    } finally {
+      this.polling = false;
+    }
+  }
+
   // ---------- входящие сообщения ----------
 
   async onMessage(event) {
@@ -154,9 +228,20 @@ class UserSession {
         if (this.seen.length > 8) this.seen.shift();
       } else {
         this.otherCount = (this.otherCount || 0) + 1;
+        this.otherChats.set(cid, (this.otherChats.get(cid) || 0) + 1);
+        if (this.otherChats.size > 15) this.otherChats.delete(this.otherChats.keys().next().value);
       }
     } catch {}
+    await this.dispatch(msg);
+  }
+
+  // Общая обработка сообщения — и для апдейтов, и для опроса вручную
+  async dispatch(msg) {
     if (!this.running) return;
+    const key = `${msg.chatId}:${msg.id}`;
+    if (this.processed.has(key)) return;
+    this.processed.add(key);
+    if (this.processed.size > 1000) this.processed.delete(this.processed.values().next().value);
     // свои исходящие сообщения игнорируем; для теста с того же аккаунта: WATCH_OWN=1
     if (msg.out && !process.env.WATCH_OWN) {
       if (process.env.DEBUG_WATCH) console.log(`[watch] пропуск: сообщение отправлено с самого аккаунта бота (чат ${msg.chatId})`);

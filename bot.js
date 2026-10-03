@@ -563,6 +563,19 @@ function setupBot(config, users, sessions) {
       if (!s.seen.length) lines.push('  ничего не приходило из нужной группы');
       s.seen.forEach((m) => lines.push(
         `  ${fmtMinutes((Date.now() - m.at) / 60000)} назад: чат ${m.chatId}, тема ${m.topic}, ${m.out ? 'ИСХОДЯЩЕЕ' : 'входящее'}, медиа: ${m.media || 'нет'}`));
+      const others = [...(s.otherChats || new Map()).entries()].map(([id, n]) => `${id} (${n})`);
+      lines.push('  чаты, откуда приходили сообщения: ' + (others.length ? others.join(', ') : '—'));
+      const pi = s.pollInfo || {};
+      lines.push('', `Ручной опрос тем: проходов ${pi.runs || 0}, новых сообщений найдено ${pi.fetched || 0}, из них пропущено апдейтами ${pi.fed || 0}`);
+      (pi.errors || []).forEach((e) => lines.push(`  ошибка ${fmtMinutes((Date.now() - e.at) / 60000)} назад: ${e.text}`));
+      for (const t of w.targets) {
+        try {
+          const ent = await s.client.getEntity((t.chatIds || [])[0]);
+          lines.push(`  доступ к ${t.chat}: «${ent.title || ent.username}», форум: ${ent.forum ? 'да' : 'нет'}, вышел/кикнут: ${ent.left ? 'да' : 'нет'}`);
+        } catch (e) {
+          lines.push(`  доступ к ${t.chat}: ❌ ${e.errorMessage || e.message}`);
+        }
+      }
       lines.push('', 'Журнал слежки:');
       if (!s.watcher.log.length) lines.push('  пусто');
       s.watcher.log.forEach((l) => lines.push(`  ${fmtMinutes((Date.now() - l.at) / 60000)} назад: ${l.text}`));
