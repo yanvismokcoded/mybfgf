@@ -2,10 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 
-// Личные данные КАЖДОГО пользователя бота.
-// Ключ — telegram id пользователя. Никаких общих чатов/каналов/сессий:
-// новый пользователь получает пустую карточку и логинится своим аккаунтом.
-
+// Личные данные КАЖДОГО пользователя бота (ключ — telegram id).
 const file = path.join(config.VOLUME_DIR, 'users.json');
 
 let data = { users: {} };
@@ -30,6 +27,8 @@ function save() {
   }
 }
 
+const DEFAULT_KEYWORDS = ['заказ', 'новый заказ'];
+
 function blank(id) {
   return {
     id: String(id),
@@ -43,35 +42,18 @@ function blank(id) {
     apiId: null, // если null — берётся общий из config
     apiHash: null,
 
-    // личные списки
-    chats: [],
+    // каналы, от имени которых бот тапает
     channels: [],
-    folders: [],
 
-    // личные каналы для служебных сообщений
-    dealsChannel: '', // канал с договорами о вз
-    logsChannel: '', // технический лог
-
-    // личные настройки
-    defaultVotes: config.data.defaultVotes,
-    confirmKeyword: config.data.confirmKeyword,
-    doneKeyword: config.data.doneKeyword,
-    afterYouReply: config.data.afterYouReply,
-    answerGeneralOffers: config.data.answerGeneralOffers,
-
-    autopost: { enabled: false, text: '', entities: [], intervalMin: null, lastAt: null, nextAt: null, lastResult: null },
-
-    ownPosts: {}, // "chatId_msgId" сообщений, которые отправил ВЗ-модуль бота (автопост, предложения, наше "вз") -> timestamp
-
-    // какие каналы уже тапали какой пост (чтобы не дублировать)
+    // какие посты уже тапали: "chatId_postId" -> [каналы]
     tapped: {},
 
-    // наблюдение за темой: ссылка на тап + опрос -> тапнуть, отметиться в опросе, отчитаться (см. watcher.js)
+    // слежка за темами
     watch: {
       enabled: false,
-      chat: '',      // ссылка/юз/id группы, как ввёл пользователь
-      chatIds: [],   // резолвнутые числовые id этой группы (супергруппа/обычная)
-      topicId: null, // id темы форума; null — любая тема / чат без тем
+      targets: [],            // [{ chat, chatIds, topicId }]
+      keywords: [...DEFAULT_KEYWORDS], // пусто = реагировать на любую ссылку с юзом
+      tapCount: config.data.defaultVotes || 20,
       lastAt: null,
       lastResult: null
     }
@@ -84,17 +66,19 @@ function normalize(u) {
   for (const [k, v] of Object.entries(def)) {
     if (u[k] === undefined) u[k] = v;
   }
-  for (const k of ['chats', 'channels', 'folders']) {
-    if (!Array.isArray(u[k])) u[k] = [];
-  }
-  if (!u.autopost || typeof u.autopost !== 'object') u.autopost = def.autopost;
+  if (!Array.isArray(u.channels)) u.channels = [];
   if (!u.tapped || typeof u.tapped !== 'object') u.tapped = {};
 
-  if (!u.ownPosts || typeof u.ownPosts !== 'object' || Array.isArray(u.ownPosts)) u.ownPosts = {};
-
   if (!u.watch || typeof u.watch !== 'object') u.watch = def.watch;
-  if (!Array.isArray(u.watch.chatIds)) u.watch.chatIds = [];
-
+  const w = u.watch;
+  if (!Array.isArray(w.targets)) w.targets = [];
+  // миграция со старого формата (одна группа)
+  if (w.chat && Array.isArray(w.chatIds) && w.chatIds.length && !w.targets.length) {
+    w.targets.push({ chat: w.chat, chatIds: w.chatIds, topicId: w.topicId == null ? null : w.topicId });
+  }
+  delete w.chat; delete w.chatIds; delete w.topicId;
+  if (!Array.isArray(w.keywords)) w.keywords = [...DEFAULT_KEYWORDS];
+  if (!w.tapCount || w.tapCount < 1) w.tapCount = def.watch.tapCount;
   return u;
 }
 
