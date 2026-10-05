@@ -113,6 +113,7 @@ class Userbot {
       throw new Error('Эта версия teleproto не поддерживает вход по QR');
     }
 
+    console.log(`[user ${this.user.id}] qr login: старт, dc=${this.client.session && this.client.session.dcId}`);
     const attempt = { cancelled: false, reason: null };
     this.qr = attempt;
     const timer = setTimeout(() => { this.cancelQr('timeout'); }, timeoutMs);

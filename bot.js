@@ -1,4 +1,4 @@
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const { Api, utils } = require('teleproto');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
@@ -201,7 +201,8 @@ function setupBot(config, users, sessions) {
         SentCodeTypeMissedCall: 'пропущенным звонком — код спрятан в номере звонившего',
         SentCodeTypeEmailCode: 'на привязанную к аккаунту почту'
       };
-      const where = WHERE[result?.type?.className] || 'через Telegram';
+      console.log(`[user ${ctx.from.id}] sendCode: type=${result?.type?.className} next=${result?.nextType?.className || '-'} timeout=${result?.timeout ?? '-'}`);
+      const where = WHERE[result?.type?.className] || `через Telegram (тип: ${result?.type?.className || 'неизвестно'})`;
       ctx.reply(`Код отправлен: ${where}.\nВведите: /code <код>\n(можно с пробелами: /code 1 2 3 4 5)`);
     } catch (e) {
       console.error('login error:', e);
@@ -232,12 +233,13 @@ function setupBot(config, users, sessions) {
     qrPasswords.delete(uid);
     const chatId = ctx.chat.id;
     let qrMsgId = null;
+    let qrN = 0;
 
     const caption =
       '📱 Вход по QR-коду\n\n' +
       '1) Открой Telegram на телефоне, где залогинен нужный аккаунт\n' +
       '2) Настройки → Устройства → Подключить устройство\n' +
-      '3) Наведи камеру на этот QR\n\n' +
+      '3) Наведи камеру на этот QR (нужно второе устройство или экран — с того же телефона QR не отсканировать; тогда нажми кнопку под QR)\n\n' +
       'QR обновляется каждые ~30 секунд, весь вход действует 3 минуты. ' +
       'Если на аккаунте включена 2FA — я попрошу пароль.\n' +
       'Отмена: /qr_cancel';
@@ -253,14 +255,24 @@ function setupBot(config, users, sessions) {
       try {
         await s.userbot.loginWithQr({
           onQr: async (url) => {
-            const png = await QRCode.toBuffer(url, { width: 512, margin: 2 });
+            qrN++;
+            console.log(`[user ${uid}] qr #${qrN} (токен обновлён, длина ссылки ${url.length})`);
+            const png = await QRCode.toBuffer(url, { width: 512, margin: 4 });
+            // кнопка с той же ссылкой — на случай, если сканировать нечем (бот открыт на том же телефоне)
+            const kb = Markup.inlineKeyboard([Markup.button.url('📲 Открыть в Telegram', url)]);
             if (!qrMsgId) {
-              const m = await bot.telegram.sendPhoto(chatId, { source: png }, { caption });
+              let m;
+              try {
+                m = await bot.telegram.sendPhoto(chatId, { source: png }, { caption, ...kb });
+              } catch (e) {
+                console.log('qr: кнопка не принята, шлю без неё:', e.message);
+                m = await bot.telegram.sendPhoto(chatId, { source: png }, { caption });
+              }
               qrMsgId = m.message_id;
             } else {
               try {
                 await bot.telegram.editMessageMedia(chatId, qrMsgId, undefined,
-                  { type: 'photo', media: { source: png }, caption });
+                  { type: 'photo', media: { source: png }, caption }, kb);
               } catch (e) {
                 console.log('qr refresh error:', e.message);
               }
