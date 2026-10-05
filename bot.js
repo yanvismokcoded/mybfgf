@@ -1,6 +1,7 @@
 const { Telegraf } = require('telegraf');
 const { Api, utils } = require('teleproto');
 const crypto = require('crypto');
+const QRCode = require('qrcode');
 
 // Одноразовый ключ вида "A1B2-C3D4"
 function generateKey() {
@@ -50,7 +51,8 @@ function helpText(isOwner) {
     'В чат с заказами бот ничего не пишет.\n\n' +
     (isOwner ? '👑 Владелец:\n/genkey — выдать ключ регистрации\n/users — список пользователей\n/revoke <id> — удалить пользователя\n/login_code — последние сообщения от Telegram (777000)\n\n' : '') +
     '🔑 Аккаунт:\n' +
-    '/login <номер> — вход в свой Telegram (например /login +79990000000)\n' +
+    '/qr — вход по QR-коду (без SMS: сканируешь QR с телефона)\n' +
+    '/login <номер> — вход по номеру (например /login +79990000000)\n' +
     '/code <код> — код из Telegram\n' +
     '/password <пароль> — 2FA\n' +
     '/logout — выйти из аккаунта\n' +
@@ -184,6 +186,8 @@ function setupBot(config, users, sessions) {
 
     try {
       const s = S(ctx);
+      qrPasswords.delete(String(ctx.from.id));
+      await s.userbot.cancelQr();
       await s.userbot.connect();
       if (await s.userbot.isAuthorized()) {
         return ctx.reply('Аккаунт уже подключён. Чтобы войти другим — сначала /logout');
@@ -205,6 +209,110 @@ function setupBot(config, users, sessions) {
     }
   });
 
+  // ---------- вход по QR ----------
+
+  // userId -> функция, которая отдаёт пароль 2FA в ожидающий вход по QR
+  const qrPasswords = new Map();
+
+  bot.command('qr', async (ctx) => {
+    const uid = String(ctx.from.id);
+    const s = S(ctx);
+
+    try {
+      await s.userbot.cancelQr();
+      await s.userbot.connect();
+      if (await s.userbot.isAuthorized()) {
+        return ctx.reply('Аккаунт уже подключён. Чтобы войти другим — сначала /logout');
+      }
+    } catch (e) {
+      console.error('qr start error:', e);
+      return ctx.reply(`Ошибка: ${e.errorMessage || e.message}`);
+    }
+
+    qrPasswords.delete(uid);
+    const chatId = ctx.chat.id;
+    let qrMsgId = null;
+
+    const caption =
+      '📱 Вход по QR-коду\n\n' +
+      '1) Открой Telegram на телефоне, где залогинен нужный аккаунт\n' +
+      '2) Настройки → Устройства → Подключить устройство\n' +
+      '3) Наведи камеру на этот QR\n\n' +
+      'QR обновляется каждые ~30 секунд, весь вход действует 3 минуты. ' +
+      'Если на аккаунте включена 2FA — я попрошу пароль.\n' +
+      'Отмена: /qr_cancel';
+
+    const dropQr = async () => {
+      if (!qrMsgId) return;
+      try { await bot.telegram.deleteMessage(chatId, qrMsgId); } catch {}
+      qrMsgId = null;
+    };
+
+    // Вход идёт в фоне: обработчик команды не должен висеть минуты (у telegraf есть таймаут)
+    (async () => {
+      try {
+        await s.userbot.loginWithQr({
+          onQr: async (url) => {
+            const png = await QRCode.toBuffer(url, { width: 512, margin: 2 });
+            if (!qrMsgId) {
+              const m = await bot.telegram.sendPhoto(chatId, { source: png }, { caption });
+              qrMsgId = m.message_id;
+            } else {
+              try {
+                await bot.telegram.editMessageMedia(chatId, qrMsgId, undefined,
+                  { type: 'photo', media: { source: png }, caption });
+              } catch (e) {
+                console.log('qr refresh error:', e.message);
+              }
+            }
+          },
+          askPassword: async (hint) => {
+            await dropQr(); // QR уже отсканирован — он больше не нужен
+            await bot.telegram.sendMessage(chatId,
+              '🔐 QR принят, но на аккаунте включена 2FA.\n' +
+              'Пришли пароль: /password <пароль>' + (hint ? `\nПодсказка: ${hint}` : ''));
+            return new Promise((resolve) => qrPasswords.set(uid, resolve));
+          },
+          onWrongPassword: async () => {
+            await bot.telegram.sendMessage(chatId, '❌ Неверный пароль. Попробуй ещё раз: /password <пароль>');
+          }
+        });
+
+        qrPasswords.delete(uid);
+        await dropQr();
+
+        // запоминаем номер, чтобы /status его показывал
+        try {
+          const me = await s.userbot.client.getMe();
+          if (me && me.phone) {
+            U(ctx).phone = '+' + String(me.phone).replace(/^\+/, '');
+            users.save();
+          }
+        } catch {}
+
+        await s.start();
+        await bot.telegram.sendMessage(chatId,
+          '✅ Аккаунт подключён по QR. Каналы для тапов: /add_channel, темы для слежки: /watch_add');
+      } catch (e) {
+        qrPasswords.delete(uid);
+        await dropQr();
+        if (e.message === 'QR_CANCELLED') return; // сообщение отправит /qr_cancel
+        if (e.message === 'QR_TIMEOUT') {
+          return bot.telegram.sendMessage(chatId, '⌛ Время вышло — QR не отсканирован. Попробуй снова: /qr');
+        }
+        console.error('qr login error:', e);
+        bot.telegram.sendMessage(chatId, `Ошибка входа по QR: ${e.errorMessage || e.message}`).catch(() => {});
+      }
+    })();
+  });
+
+  bot.command('qr_cancel', async (ctx) => {
+    const uid = String(ctx.from.id);
+    qrPasswords.delete(uid);
+    const was = await S(ctx).userbot.cancelQr();
+    ctx.reply(was ? '🚫 Вход по QR отменён.' : 'Вход по QR сейчас не идёт.');
+  });
+
   bot.command('code', async (ctx) => {
     const u = U(ctx);
     const code = ctx.message.text.split(' ').slice(1).join('');
@@ -224,6 +332,16 @@ function setupBot(config, users, sessions) {
   bot.command('password', async (ctx) => {
     const pwd = ctx.message.text.split(' ').slice(1).join(' ');
     if (!pwd) return ctx.reply('Формат: /password пароль');
+
+    // вход по QR ждёт пароль 2FA
+    const waiting = qrPasswords.get(String(ctx.from.id));
+    if (waiting) {
+      qrPasswords.delete(String(ctx.from.id));
+      try { await ctx.deleteMessage(); } catch {} // не оставляем пароль в переписке
+      waiting(pwd);
+      return ctx.reply('⏳ Проверяю пароль…');
+    }
+
     try {
       const s = S(ctx);
       await s.userbot.checkPassword(pwd);
@@ -238,6 +356,8 @@ function setupBot(config, users, sessions) {
   bot.command('logout', async (ctx) => {
     try {
       const s = S(ctx);
+      qrPasswords.delete(String(ctx.from.id));
+      await s.userbot.cancelQr();
       await s.stop();
       await s.userbot.logout();
       await sessions.drop(ctx.from.id);
@@ -594,7 +714,7 @@ function setupBot(config, users, sessions) {
     try { auth = await s.userbot.isAuthorized(); } catch {}
     ctx.reply(
       `👤 Ваш id: ${u.id}\n` +
-      `Аккаунт: ${auth ? 'подключён' + (u.phone ? ' (' + u.phone + ')' : '') : 'не подключён — /login <номер>'}\n` +
+      `Аккаунт: ${auth ? 'подключён' + (u.phone ? ' (' + u.phone + ')' : '') : 'не подключён — /qr или /login <номер>'}\n` +
       `Сессия: ${s.running ? 'работает' : 'остановлена'}\n\n` +
       watchStatus(u)
     );

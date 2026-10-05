@@ -10,6 +10,7 @@ class Userbot {
     this.users = users;
     this.client = null;
     this.phoneCodeHash = null;
+    this.qr = null; // активная попытка входа по QR
   }
 
   get apiId() {
@@ -98,6 +99,72 @@ class Userbot {
     );
     this.phoneCodeHash = null;
     this.saveSession();
+  }
+
+  // Вход по QR-коду. Пользователь сканирует QR с телефона, где уже открыт этот аккаунт
+  // (Настройки → Устройства → Подключить устройство).
+  //   onQr(url)            — вызывается при каждом новом QR (токен живёт ~30 с)
+  //   askPassword(hint)    — должен вернуть пароль 2FA (если включена)
+  //   onWrongPassword()    — пароль не подошёл, сейчас снова вызовется askPassword
+  async loginWithQr({ onQr, askPassword, onWrongPassword, timeoutMs = 3 * 60 * 1000 }) {
+    await this.cancelQr();
+    await this.connect();
+    if (typeof this.client.signInUserWithQrCode !== 'function') {
+      throw new Error('Эта версия teleproto не поддерживает вход по QR');
+    }
+
+    const attempt = { cancelled: false, reason: null };
+    this.qr = attempt;
+    const timer = setTimeout(() => { this.cancelQr('timeout'); }, timeoutMs);
+    const guard = () => { if (attempt.cancelled) throw new Error('QR_CANCELLED'); };
+
+    try {
+      await this.client.signInUserWithQrCode(
+        { apiId: this.apiId, apiHash: this.apiHash },
+        {
+          qrCode: async ({ token }) => {
+            guard();
+            await onQr('tg://login?token=' + Buffer.from(token).toString('base64url'));
+          },
+          password: async (hint) => {
+            guard();
+            return askPassword(hint);
+          },
+          onError: async (err) => {
+            if (attempt.cancelled) return true; // остановить
+            if (err && err.errorMessage === 'PASSWORD_HASH_INVALID') {
+              if (onWrongPassword) await onWrongPassword();
+              return false; // спросим пароль ещё раз
+            }
+            console.log(`[user ${this.user.id}] qr login error:`, (err && (err.errorMessage || err.message)) || err);
+            return true;
+          }
+        }
+      );
+    } catch (e) {
+      if (attempt.cancelled) {
+        const err = new Error(attempt.reason === 'timeout' ? 'QR_TIMEOUT' : 'QR_CANCELLED');
+        err.qrReason = attempt.reason || 'cancel';
+        throw err;
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      if (this.qr === attempt) this.qr = null;
+    }
+    this.saveSession();
+  }
+
+  // Останавливает текущий вход по QR (если он идёт). Отключаем клиента — так цикл ожидания
+  // прерывается сразу, а не через 30 секунд; следующий connect() создаст нового.
+  async cancelQr(reason = 'cancel') {
+    const a = this.qr;
+    if (!a) return false;
+    a.cancelled = true;
+    a.reason = reason;
+    this.qr = null;
+    await this.disconnect();
+    return true;
   }
 
   async logout() {

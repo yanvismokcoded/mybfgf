@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "big-integer": "^1.6.52",
+    "qrcode": "^1.5.4",
     "telegraf": "^4.16.3",
     "teleproto": "^1.229.0"
   }
